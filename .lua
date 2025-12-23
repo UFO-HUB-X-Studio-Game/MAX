@@ -1,1 +1,1 @@
-สวัสดีสุดหล่อ
+local btnSettings,setSettingsActive = makeTabButton(LeftScroll, "Settings",ICON_SETTINGS)
