@@ -1254,10 +1254,11 @@ registerRight("Home", function(scroll)
         if set3 then set3((AA1_WAT3 and AA1_WAT3.getEnabled and AA1_WAT3.getEnabled()) or false) end
     end)
 end)
---===== UFO HUB X • Home – Auto Lucky Box (Warp + Fire Prompt) (Model A V1) =====
+--===== UFO HUB X • Home – Auto Lucky Box (Warp + Fire + Return) (Model A V1) =====
 -- Header : "Auto Lucky Box 🎁"
 -- Row 1  : "Auto Lucky Box"
 -- Action : Warp to workspace.Debris.Normal.Main THEN Fire ProximityPrompt
+-- Return : If Normal/Main disappears -> warp back to saved position
 
 registerRight("Home", function(scroll)
     local RunService = game:GetService("RunService")
@@ -1331,14 +1332,27 @@ registerRight("Home", function(scroll)
     end
 
     local function getMainCFrame(main)
+        if not main then return end
         if main:IsA("BasePart") then
             return main.CFrame
         elseif main:IsA("Model") then
-            local ok, pv = pcall(function()
-                return main:GetPivot()
-            end)
-            if ok then return pv end
+            local ok, pv = pcall(function() return main:GetPivot() end)
+            if ok and pv then return pv end
         end
+    end
+
+    local function safeWarpToCFrame(cf)
+        local hum, hrp = getChar()
+        if not (hrp and cf) then return end
+        pcall(function()
+            hum.Sit = false
+            hum.PlatformStand = false
+        end)
+        pcall(function()
+            hrp.CFrame = cf
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        end)
     end
 
     -- ===== AUTO LOGIC =====
@@ -1350,6 +1364,9 @@ registerRight("Home", function(scroll)
 
     local DELAY = 0.4
     local OFFSET = Vector3.new(0,0,-3)
+
+    local savedCFrame = nil
+    local lastTargetCFrame = nil
 
     local function collect()
         targets = {}
@@ -1366,32 +1383,50 @@ registerRight("Home", function(scroll)
         end
     end
 
+    local function returnHome()
+        if savedCFrame then
+            safeWarpToCFrame(savedCFrame)
+        end
+    end
+
     local function step()
         if not ENABLED then return end
         if os.clock() - last < DELAY then return end
         last = os.clock()
 
+        -- ถ้าไม่มีเป้าหมายแล้ว = กล่องหาย -> กลับที่เดิม
         if #targets == 0 then
             collect()
-            if #targets == 0 then return end
+            if #targets == 0 then
+                returnHome()
+                return
+            end
         end
 
         index = (index % #targets) + 1
         local main = targets[index]
 
+        -- ถ้า main หายไปแล้ว -> กลับบ้าน + รีคอลเลค
+        if not (main and main.Parent) then
+            collect()
+            returnHome()
+            return
+        end
+
         local hum, hrp = getChar()
         if not hrp then return end
 
         local cf = getMainCFrame(main)
-        if not cf then return end
+        if not cf then
+            collect()
+            returnHome()
+            return
+        end
 
-        hum.Sit = false
-        hum.PlatformStand = false
-
-        -- วาร์ปก่อน
-        hrp.CFrame = cf * CFrame.new(OFFSET)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
+        -- วาร์ปไปหน้า Main
+        local targetCf = cf * CFrame.new(OFFSET)
+        lastTargetCFrame = targetCf
+        safeWarpToCFrame(targetCf)
 
         -- แล้วค่อยกด ProximityPrompt
         local prompt = main:FindFirstChild("ProximityPrompt")
@@ -1400,16 +1435,40 @@ registerRight("Home", function(scroll)
                 fireproximityprompt(prompt)
             end)
         end
+
+        -- หลังยิงเสร็จ: ถ้า Main/Prompt หาย (โดน Destroy) -> กลับที่เดิม
+        task.defer(function()
+            if not ENABLED then return end
+
+            -- กันเคสโดนย้าย/ลบ: parent หาย หรือ prompt หาย
+            local stillAlive = (main and main.Parent ~= nil)
+            local stillHasPrompt = false
+            if stillAlive then
+                local p = main:FindFirstChild("ProximityPrompt")
+                stillHasPrompt = (p and p:IsA("ProximityPrompt")) and true or false
+            end
+
+            if (not stillAlive) or (not stillHasPrompt) then
+                collect()
+                returnHome()
+            end
+        end)
     end
 
     local function setEnabled(v)
-        ENABLED = v
+        ENABLED = v and true or false
         if conn then conn:Disconnect() conn = nil end
+
         if ENABLED then
+            local _, hrp = getChar()
+            savedCFrame = hrp and hrp.CFrame or nil
+
             collect()
             index = 0
             last = 0
             conn = RunService.Heartbeat:Connect(step)
+        else
+            returnHome()
         end
     end
 
@@ -1467,8 +1526,7 @@ registerRight("Home", function(scroll)
     btn.AutoButtonColor = false
 
     btn.MouseButton1Click:Connect(function()
-        ENABLED = not ENABLED
-        setEnabled(ENABLED)
+        setEnabled(not ENABLED)
         update(ENABLED)
     end)
 
