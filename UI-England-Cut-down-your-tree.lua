@@ -1254,10 +1254,13 @@ registerRight("Home", function(scroll)
         if set3 then set3((AA1_WAT3 and AA1_WAT3.getEnabled and AA1_WAT3.getEnabled()) or false) end
     end)
 end)
---===== UFO HUB X • Home – Auto Lucky Box (Model A V1) =====
+--===== UFO HUB X • Home – Lucky Box Prompt Booster (Model A V1) =====
 -- Header : "Auto Lucky Box 🎁"
 -- Row 1  : "Auto Lucky Box"
--- Action : fire ProximityPrompt under workspace.Debris.Normal.*
+-- Effect : Make ALL ProximityPrompt under workspace.Debris.Normal.Main.ProximityPrompt
+--          usable from ANY distance (MaxActivationDistance huge), instant (HoldDuration=0),
+--          no line-of-sight required.
+-- NOTE    : Client-only cannot "auto trigger" prompt. This is legit "far distance" enable.
 
 registerRight("Home", function(scroll)
     local RunService = game:GetService("RunService")
@@ -1298,7 +1301,7 @@ registerRight("Home", function(scroll)
     end
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
-    -- ===== dynamic base LayoutOrder =====
+    -- ===== dynamic base LayoutOrder (ตามโมเดล A V1) =====
     local base = 0
     for _,c in ipairs(scroll:GetChildren()) do
         if c:IsA("GuiObject") and c ~= list then
@@ -1319,23 +1322,37 @@ registerRight("Home", function(scroll)
     header.Text = "Auto Lucky Box 🎁"
     header.LayoutOrder = base + 1
 
-    -- ===== AUTO LOGIC =====
+    -- ===== PROMPT BOOST LOGIC (client-only) =====
     local ENABLED = false
     local conn
+    local boosted = setmetatable({}, { __mode = "k" }) -- weak keys
 
-    local function fireAllLuckyBoxes()
+    local function tryBoostPrompt(prompt: ProximityPrompt)
+        if not prompt or not prompt:IsA("ProximityPrompt") then return end
+        if boosted[prompt] then return end
+        boosted[prompt] = true
+
+        pcall(function()
+            prompt.Enabled = true
+            prompt.RequiresLineOfSight = false
+            prompt.HoldDuration = 0
+            -- “ไกลแค่ไหนก็ได้”
+            prompt.MaxActivationDistance = 1e9
+        end)
+    end
+
+    local function scanAndBoost()
         local debris = workspace:FindFirstChild("Debris")
         if not debris then return end
 
+        -- ตามสเปก: กดทุกอันที่ชื่อ Normal -> Main -> ProximityPrompt
         for _, normal in ipairs(debris:GetChildren()) do
             if normal.Name == "Normal" then
                 local main = normal:FindFirstChild("Main")
                 if main then
                     local prompt = main:FindFirstChild("ProximityPrompt")
-                    if prompt and prompt:IsA("ProximityPrompt") then
-                        pcall(function()
-                            fireproximityprompt(prompt)
-                        end)
+                    if prompt then
+                        tryBoostPrompt(prompt)
                     end
                 end
             end
@@ -1343,7 +1360,7 @@ registerRight("Home", function(scroll)
     end
 
     local function setEnabled(v)
-        ENABLED = v
+        ENABLED = v and true or false
 
         if conn then
             conn:Disconnect()
@@ -1351,8 +1368,10 @@ registerRight("Home", function(scroll)
         end
 
         if ENABLED then
+            -- สแกนทันที + คอยสแกนต่อกันกรณี spawn เพิ่ม
+            scanAndBoost()
             conn = RunService.Heartbeat:Connect(function()
-                fireAllLuckyBoxes()
+                scanAndBoost()
             end)
         end
     end
