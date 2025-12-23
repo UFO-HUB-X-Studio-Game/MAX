@@ -1254,16 +1254,15 @@ registerRight("Home", function(scroll)
         if set3 then set3((AA1_WAT3 and AA1_WAT3.getEnabled and AA1_WAT3.getEnabled()) or false) end
     end)
 end)
---===== UFO HUB X • Home – Lucky Box Prompt Booster (Model A V1) =====
+--===== UFO HUB X • Home – Auto Lucky Box (Warp + Fire Prompt) (Model A V1) =====
 -- Header : "Auto Lucky Box 🎁"
 -- Row 1  : "Auto Lucky Box"
--- Effect : Make ALL ProximityPrompt under workspace.Debris.Normal.Main.ProximityPrompt
---          usable from ANY distance (MaxActivationDistance huge), instant (HoldDuration=0),
---          no line-of-sight required.
--- NOTE    : Client-only cannot "auto trigger" prompt. This is legit "far distance" enable.
+-- Action : Warp to workspace.Debris.Normal.Main THEN Fire ProximityPrompt
 
 registerRight("Home", function(scroll)
     local RunService = game:GetService("RunService")
+    local Players = game:GetService("Players")
+    local LP = Players.LocalPlayer
 
     -- ===== THEME (A V1) =====
     local THEME = {
@@ -1286,22 +1285,20 @@ registerRight("Home", function(scroll)
         s.Parent = ui
     end
 
-    -- ===== CLEANUP (เฉพาะของเรา) =====
+    -- ===== CLEANUP =====
     for _,n in ipairs({"ALB_Header","ALB_Row1"}) do
         local o = scroll:FindFirstChild(n)
         if o then o:Destroy() end
     end
 
-    -- ===== ONE UIListLayout =====
+    -- ===== LIST =====
     local list = scroll:FindFirstChildOfClass("UIListLayout")
     if not list then
         list = Instance.new("UIListLayout", scroll)
         list.Padding = UDim.new(0,12)
-        list.SortOrder = Enum.SortOrder.LayoutOrder
     end
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
-    -- ===== dynamic base LayoutOrder (ตามโมเดล A V1) =====
     local base = 0
     for _,c in ipairs(scroll:GetChildren()) do
         if c:IsA("GuiObject") and c ~= list then
@@ -1322,61 +1319,101 @@ registerRight("Home", function(scroll)
     header.Text = "Auto Lucky Box 🎁"
     header.LayoutOrder = base + 1
 
-    -- ===== PROMPT BOOST LOGIC (client-only) =====
-    local ENABLED = false
-    local conn
-    local boosted = setmetatable({}, { __mode = "k" }) -- weak keys
-
-    local function tryBoostPrompt(prompt: ProximityPrompt)
-        if not prompt or not prompt:IsA("ProximityPrompt") then return end
-        if boosted[prompt] then return end
-        boosted[prompt] = true
-
-        pcall(function()
-            prompt.Enabled = true
-            prompt.RequiresLineOfSight = false
-            prompt.HoldDuration = 0
-            -- “ไกลแค่ไหนก็ได้”
-            prompt.MaxActivationDistance = 1e9
-        end)
+    -- ===== HELPERS =====
+    local function getChar()
+        local ch = LP.Character
+        if not ch then return end
+        local hrp = ch:FindFirstChild("HumanoidRootPart")
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            return hum, hrp
+        end
     end
 
-    local function scanAndBoost()
+    local function getMainCFrame(main)
+        if main:IsA("BasePart") then
+            return main.CFrame
+        elseif main:IsA("Model") then
+            local ok, pv = pcall(function()
+                return main:GetPivot()
+            end)
+            if ok then return pv end
+        end
+    end
+
+    -- ===== AUTO LOGIC =====
+    local ENABLED = false
+    local conn
+    local targets = {}
+    local index = 0
+    local last = 0
+
+    local DELAY = 0.4
+    local OFFSET = Vector3.new(0,0,-3)
+
+    local function collect()
+        targets = {}
         local debris = workspace:FindFirstChild("Debris")
         if not debris then return end
 
-        -- ตามสเปก: กดทุกอันที่ชื่อ Normal -> Main -> ProximityPrompt
-        for _, normal in ipairs(debris:GetChildren()) do
-            if normal.Name == "Normal" then
-                local main = normal:FindFirstChild("Main")
+        for _,n in ipairs(debris:GetChildren()) do
+            if n.Name == "Normal" then
+                local main = n:FindFirstChild("Main")
                 if main then
-                    local prompt = main:FindFirstChild("ProximityPrompt")
-                    if prompt then
-                        tryBoostPrompt(prompt)
-                    end
+                    table.insert(targets, main)
                 end
             end
         end
     end
 
-    local function setEnabled(v)
-        ENABLED = v and true or false
+    local function step()
+        if not ENABLED then return end
+        if os.clock() - last < DELAY then return end
+        last = os.clock()
 
-        if conn then
-            conn:Disconnect()
-            conn = nil
+        if #targets == 0 then
+            collect()
+            if #targets == 0 then return end
         end
 
-        if ENABLED then
-            -- สแกนทันที + คอยสแกนต่อกันกรณี spawn เพิ่ม
-            scanAndBoost()
-            conn = RunService.Heartbeat:Connect(function()
-                scanAndBoost()
+        index = (index % #targets) + 1
+        local main = targets[index]
+
+        local hum, hrp = getChar()
+        if not hrp then return end
+
+        local cf = getMainCFrame(main)
+        if not cf then return end
+
+        hum.Sit = false
+        hum.PlatformStand = false
+
+        -- วาร์ปก่อน
+        hrp.CFrame = cf * CFrame.new(OFFSET)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+
+        -- แล้วค่อยกด ProximityPrompt
+        local prompt = main:FindFirstChild("ProximityPrompt")
+        if prompt and prompt:IsA("ProximityPrompt") then
+            pcall(function()
+                fireproximityprompt(prompt)
             end)
         end
     end
 
-    -- ===== ROW SWITCH =====
+    local function setEnabled(v)
+        ENABLED = v
+        if conn then conn:Disconnect() conn = nil end
+        if ENABLED then
+            collect()
+            index = 0
+            last = 0
+            conn = RunService.Heartbeat:Connect(step)
+        end
+    end
+
+    -- ===== ROW =====
     local row = Instance.new("Frame")
     row.Name = "ALB_Row1"
     row.Parent = scroll
@@ -1396,7 +1433,6 @@ registerRight("Home", function(scroll)
     lab.TextXAlignment = Enum.TextXAlignment.Left
     lab.Text = "Auto Lucky Box"
 
-    -- switch
     local sw = Instance.new("Frame", row)
     sw.AnchorPoint = Vector2.new(1,0.5)
     sw.Position = UDim2.new(1,-12,0.5,0)
