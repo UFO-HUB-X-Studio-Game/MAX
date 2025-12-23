@@ -1254,6 +1254,171 @@ registerRight("Home", function(scroll)
         if set3 then set3((AA1_WAT3 and AA1_WAT3.getEnabled and AA1_WAT3.getEnabled()) or false) end
     end)
 end)
+--===== UFO HUB X • Home – Auto Lucky Box (Model A V1) =====
+-- Header : "Auto Lucky Box 🎁"
+-- Row 1  : "Auto Lucky Box"
+-- Action : fire ProximityPrompt under workspace.Debris.Normal.*
+
+registerRight("Home", function(scroll)
+    local RunService = game:GetService("RunService")
+
+    -- ===== THEME (A V1) =====
+    local THEME = {
+        GREEN = Color3.fromRGB(25,255,125),
+        RED   = Color3.fromRGB(255,40,40),
+        WHITE = Color3.fromRGB(255,255,255),
+        BLACK = Color3.fromRGB(0,0,0),
+    }
+
+    local function corner(ui,r)
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, r or 12)
+        c.Parent = ui
+    end
+
+    local function stroke(ui,t,col)
+        local s = Instance.new("UIStroke")
+        s.Thickness = t or 2.2
+        s.Color = col or THEME.GREEN
+        s.Parent = ui
+    end
+
+    -- ===== CLEANUP (เฉพาะของเรา) =====
+    for _,n in ipairs({"ALB_Header","ALB_Row1"}) do
+        local o = scroll:FindFirstChild(n)
+        if o then o:Destroy() end
+    end
+
+    -- ===== ONE UIListLayout =====
+    local list = scroll:FindFirstChildOfClass("UIListLayout")
+    if not list then
+        list = Instance.new("UIListLayout", scroll)
+        list.Padding = UDim.new(0,12)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+    end
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+    -- ===== dynamic base LayoutOrder =====
+    local base = 0
+    for _,c in ipairs(scroll:GetChildren()) do
+        if c:IsA("GuiObject") and c ~= list then
+            base = math.max(base, c.LayoutOrder or 0)
+        end
+    end
+
+    -- ===== HEADER =====
+    local header = Instance.new("TextLabel")
+    header.Name = "ALB_Header"
+    header.Parent = scroll
+    header.Size = UDim2.new(1,0,0,36)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 16
+    header.TextColor3 = THEME.WHITE
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Text = "Auto Lucky Box 🎁"
+    header.LayoutOrder = base + 1
+
+    -- ===== AUTO LOGIC =====
+    local ENABLED = false
+    local conn
+
+    local function fireAllLuckyBoxes()
+        local debris = workspace:FindFirstChild("Debris")
+        if not debris then return end
+
+        for _, normal in ipairs(debris:GetChildren()) do
+            if normal.Name == "Normal" then
+                local main = normal:FindFirstChild("Main")
+                if main then
+                    local prompt = main:FindFirstChild("ProximityPrompt")
+                    if prompt and prompt:IsA("ProximityPrompt") then
+                        pcall(function()
+                            fireproximityprompt(prompt)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    local function setEnabled(v)
+        ENABLED = v
+
+        if conn then
+            conn:Disconnect()
+            conn = nil
+        end
+
+        if ENABLED then
+            conn = RunService.Heartbeat:Connect(function()
+                fireAllLuckyBoxes()
+            end)
+        end
+    end
+
+    -- ===== ROW SWITCH =====
+    local row = Instance.new("Frame")
+    row.Name = "ALB_Row1"
+    row.Parent = scroll
+    row.Size = UDim2.new(1,-6,0,46)
+    row.BackgroundColor3 = THEME.BLACK
+    corner(row,12)
+    stroke(row,2.2,THEME.GREEN)
+    row.LayoutOrder = base + 2
+
+    local lab = Instance.new("TextLabel", row)
+    lab.BackgroundTransparency = 1
+    lab.Position = UDim2.new(0,16,0,0)
+    lab.Size = UDim2.new(1,-160,1,0)
+    lab.Font = Enum.Font.GothamBold
+    lab.TextSize = 13
+    lab.TextColor3 = THEME.WHITE
+    lab.TextXAlignment = Enum.TextXAlignment.Left
+    lab.Text = "Auto Lucky Box"
+
+    -- switch
+    local sw = Instance.new("Frame", row)
+    sw.AnchorPoint = Vector2.new(1,0.5)
+    sw.Position = UDim2.new(1,-12,0.5,0)
+    sw.Size = UDim2.fromOffset(52,26)
+    sw.BackgroundColor3 = THEME.BLACK
+    corner(sw,13)
+
+    local st = Instance.new("UIStroke", sw)
+    st.Thickness = 1.8
+
+    local knob = Instance.new("Frame", sw)
+    knob.Size = UDim2.fromOffset(22,22)
+    knob.Position = UDim2.new(0,2,0.5,-11)
+    knob.BackgroundColor3 = THEME.WHITE
+    corner(knob,11)
+
+    local function update(on)
+        st.Color = on and THEME.GREEN or THEME.RED
+        knob:TweenPosition(
+            UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11),
+            Enum.EasingDirection.Out,
+            Enum.EasingStyle.Quad,
+            0.08,
+            true
+        )
+    end
+
+    local btn = Instance.new("TextButton", sw)
+    btn.Size = UDim2.fromScale(1,1)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.AutoButtonColor = false
+
+    btn.MouseButton1Click:Connect(function()
+        ENABLED = not ENABLED
+        setEnabled(ENABLED)
+        update(ENABLED)
+    end)
+
+    update(false)
+end)
 --===== UFO HUB X • SETTINGS — Smoother 🚀 (A V1 • fixed 3 rows) + Runner Save (per-map) + AA1 =====
 registerRight("Settings", function(scroll)
     local TweenService = game:GetService("TweenService")
