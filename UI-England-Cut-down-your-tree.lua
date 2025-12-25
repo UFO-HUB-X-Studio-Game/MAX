@@ -1575,6 +1575,410 @@ registerRight("Home", function(scroll)
 
     update(false)
 end)
+--===== UFO HUB X • Home – Auto Buyer (Model A V1 + A V2 pickers) =====
+-- Header : "Auto Buyer 🛒"
+-- Row 1  : "Select Item"  (A V2 overlay: Metal Axe / Gold Totem)  (single select, click again = off)
+-- Row 2  : "Select Amount" (A V2 overlay: Buy 1 / Buy 3)          (single select, click again = off)
+-- Row 3  : "Auto Buy" (switch) -> fires RemoteEvent to server using selections
+
+registerRight("Home", function(scroll)
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local LP = Players.LocalPlayer
+
+    -- ===== THEME (A V1) =====
+    local THEME = {
+        GREEN      = Color3.fromRGB(25,255,125),
+        GREEN_DARK = Color3.fromRGB(0,120,60),
+        RED        = Color3.fromRGB(255,40,40),
+        WHITE      = Color3.fromRGB(255,255,255),
+        BLACK      = Color3.fromRGB(0,0,0),
+    }
+
+    local function corner(ui,r)
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, r or 12)
+        c.Parent = ui
+    end
+
+    local function stroke(ui,t,col)
+        local s = Instance.new("UIStroke")
+        s.Thickness = t or 2.2
+        s.Color = col or THEME.GREEN
+        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        s.Parent = ui
+        return s
+    end
+
+    -- ===== CLEANUP (เฉพาะของเรา) =====
+    for _,n in ipairs({
+        "AB_Header",
+        "AB_Row_Item",
+        "AB_Row_Amount",
+        "AB_Row_Auto",
+        "AB_ItemPanel",
+        "AB_AmountPanel",
+    }) do
+        local o = scroll:FindFirstChild(n) or scroll.Parent:FindFirstChild(n)
+        if o then o:Destroy() end
+    end
+
+    -- ===== ensure ONE UIListLayout =====
+    local vlist = scroll:FindFirstChildOfClass("UIListLayout")
+    if not vlist then
+        vlist = Instance.new("UIListLayout", scroll)
+        vlist.Padding = UDim.new(0,12)
+        vlist.SortOrder = Enum.SortOrder.LayoutOrder
+    end
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+    -- ===== dynamic base LayoutOrder =====
+    local base = 0
+    for _,c in ipairs(scroll:GetChildren()) do
+        if c:IsA("GuiObject") and c ~= vlist then
+            base = math.max(base, c.LayoutOrder or 0)
+        end
+    end
+
+    -- ===== HEADER =====
+    local header = Instance.new("TextLabel")
+    header.Name = "AB_Header"
+    header.Parent = scroll
+    header.Size = UDim2.new(1,0,0,36)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 16
+    header.TextColor3 = THEME.WHITE
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Text = "Auto Buyer 🛒"
+    header.LayoutOrder = base + 1
+
+    -- ===== helpers row (A V1 card) =====
+    local function makeRow(name, order, labelText)
+        local row = Instance.new("Frame")
+        row.Name = name
+        row.Parent = scroll
+        row.Size = UDim2.new(1,-6,0,46)
+        row.BackgroundColor3 = THEME.BLACK
+        corner(row,12)
+        stroke(row,2.2,THEME.GREEN)
+        row.LayoutOrder = order
+
+        local lab = Instance.new("TextLabel", row)
+        lab.BackgroundTransparency = 1
+        lab.Position = UDim2.new(0,16,0,0)
+        lab.Size = UDim2.new(1,-220,1,0)
+        lab.Font = Enum.Font.GothamBold
+        lab.TextSize = 13
+        lab.TextColor3 = THEME.WHITE
+        lab.TextXAlignment = Enum.TextXAlignment.Left
+        lab.Text = labelText
+
+        return row, lab
+    end
+
+    -- ===== state =====
+    local selectedItem = nil   -- "Metal Axe" | "Gold Totem" | nil
+    local selectedAmount = nil -- 1 | 3 | nil
+    local AUTO = false
+    local autoConn
+
+    -- ===== server remote (you create on server) =====
+    local REM_FOLDER = ReplicatedStorage:FindFirstChild("_UFOX_AUTO_BUY")
+    local REQ = REM_FOLDER and REM_FOLDER:FindFirstChild("RequestBuy")
+
+    local function requestBuyOnce()
+        if not (REQ and REQ:IsA("RemoteEvent")) then
+            warn("[UFOX] Missing ReplicatedStorage._UFOX_AUTO_BUY.RequestBuy (server not installed)")
+            return
+        end
+        if not selectedItem or not selectedAmount then
+            -- ไม่สแปมแจ้งเตือนใน UI เดี๋ยวคุณค่อยใส่ toast เอง
+            return
+        end
+        REQ:FireServer(selectedItem, selectedAmount)
+    end
+
+    -- ===== Model A V2 overlay (2 buttons single-select) =====
+    local panelParent = scroll.Parent
+    local function makeTwoButtonPanel(panelName, btn1Text, btn2Text, onSelectChanged)
+        local panel
+        local inputConn
+        local opened = false
+        local selected = nil -- 1 or 2
+
+        local function close()
+            if panel then panel:Destroy(); panel=nil end
+            if inputConn then inputConn:Disconnect(); inputConn=nil end
+            opened = false
+        end
+
+        local function open(anchorBtn)
+            close()
+
+            local pw, ph = panelParent.AbsoluteSize.X, panelParent.AbsoluteSize.Y
+            local leftRatio = 0.58
+            local rightMargin = 8
+            local topY = 8
+            local h = 140
+            local leftX = math.floor(pw * leftRatio)
+            local w = pw - leftX - rightMargin
+
+            panel = Instance.new("Frame")
+            panel.Name = panelName
+            panel.Parent = panelParent
+            panel.BackgroundColor3 = THEME.BLACK
+            panel.ClipsDescendants = true
+            panel.Position = UDim2.new(0,leftX,0,topY)
+            panel.Size = UDim2.new(0,w,0,h)
+            panel.ZIndex = 60
+            corner(panel,12)
+            stroke(panel,2.4,THEME.GREEN)
+
+            local body = Instance.new("Frame", panel)
+            body.BackgroundTransparency = 1
+            body.Position = UDim2.new(0,4,0,4)
+            body.Size = UDim2.new(1,-8,1,-8)
+            body.ZIndex = panel.ZIndex + 1
+
+            local list = Instance.new("UIListLayout", body)
+            list.Padding = UDim.new(0,10)
+            list.SortOrder = Enum.SortOrder.LayoutOrder
+
+            local function makeGlowButton(text, idx)
+                local btn = Instance.new("TextButton")
+                btn.Parent = body
+                btn.Size = UDim2.new(1,0,0,36)
+                btn.BackgroundColor3 = THEME.BLACK
+                btn.AutoButtonColor = false
+                btn.Font = Enum.Font.GothamBold
+                btn.TextSize = 14
+                btn.TextColor3 = THEME.WHITE
+                btn.Text = text
+                btn.ZIndex = body.ZIndex + 1
+                corner(btn,10)
+
+                local st = stroke(btn, 1.8, THEME.GREEN_DARK)
+                st.Transparency = 0.4
+                st.ZIndex = btn.ZIndex + 1
+
+                local bar = Instance.new("Frame", btn)
+                bar.BackgroundColor3 = THEME.GREEN
+                bar.BorderSizePixel = 0
+                bar.Size = UDim2.new(0,3,1,0)
+                bar.ZIndex = btn.ZIndex + 2
+                bar.Visible = false
+
+                local function refresh()
+                    local on = (selected == idx)
+                    if on then
+                        st.Color = THEME.GREEN
+                        st.Thickness = 2.4
+                        st.Transparency = 0
+                        bar.Visible = true
+                    else
+                        st.Color = THEME.GREEN_DARK
+                        st.Thickness = 1.8
+                        st.Transparency = 0.4
+                        bar.Visible = false
+                    end
+                end
+
+                btn.MouseButton1Click:Connect(function()
+                    -- กดปุ่มเดิม = ยกเลิก
+                    if selected == idx then
+                        selected = nil
+                    else
+                        selected = idx
+                    end
+                    refresh()
+                    -- อัปเดตอีกปุ่ม
+                    for _,ch in ipairs(body:GetChildren()) do
+                        if ch:IsA("TextButton") and ch ~= btn then
+                            -- force refresh by re-evaluating selected
+                            local s = ch:FindFirstChildOfClass("UIStroke")
+                            local b = ch:FindFirstChild("Frame")
+                        end
+                    end
+                    -- refresh ทุกปุ่มแบบชัวร์
+                    for _,ch in ipairs(body:GetChildren()) do
+                        if ch:IsA("TextButton") then
+                            local s = ch:FindFirstChildOfClass("UIStroke")
+                            local bar2 = ch:FindFirstChildOfClass("Frame")
+                            local isOn = (ch.Text == btn1Text and selected==1) or (ch.Text==btn2Text and selected==2)
+                            if s then
+                                if isOn then
+                                    s.Color = THEME.GREEN; s.Thickness = 2.4; s.Transparency = 0
+                                else
+                                    s.Color = THEME.GREEN_DARK; s.Thickness = 1.8; s.Transparency = 0.4
+                                end
+                            end
+                            if bar2 then bar2.Visible = isOn end
+                        end
+                    end
+
+                    onSelectChanged(selected)
+                end)
+
+                refresh()
+                return btn
+            end
+
+            makeGlowButton(btn1Text, 1).LayoutOrder = 1
+            makeGlowButton(btn2Text, 2).LayoutOrder = 2
+
+            inputConn = UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                    and input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                if not panel then return end
+                local pos = input.Position
+                local op = panel.AbsolutePosition
+                local os = panel.AbsoluteSize
+                local inside =
+                    pos.X >= op.X and pos.X <= op.X + os.X and
+                    pos.Y >= op.Y and pos.Y <= op.Y + os.Y
+                if not inside then
+                    close()
+                end
+            end)
+
+            opened = true
+        end
+
+        return {
+            Toggle = function(anchorBtn)
+                if opened then close() else open(anchorBtn) end
+            end,
+            Close = function() close() end
+        }
+    end
+
+    -- ===== Row 1: Select Item (A V2) =====
+    local rowItem = makeRow("AB_Row_Item", base + 2, "Select Item")
+    local selectItemBtn = Instance.new("TextButton", rowItem)
+    selectItemBtn.AnchorPoint = Vector2.new(1,0.5)
+    selectItemBtn.Position = UDim2.new(1,-16,0.5,0)
+    selectItemBtn.Size = UDim2.new(0,190,0,28)
+    selectItemBtn.BackgroundColor3 = THEME.BLACK
+    selectItemBtn.AutoButtonColor = false
+    selectItemBtn.Font = Enum.Font.GothamBold
+    selectItemBtn.TextSize = 13
+    selectItemBtn.TextColor3 = THEME.WHITE
+    selectItemBtn.Text = "Select Options"
+    corner(selectItemBtn,8)
+    local itemStroke = stroke(selectItemBtn,1.8,THEME.GREEN_DARK); itemStroke.Transparency = 0.4
+
+    local itemPanel = makeTwoButtonPanel("AB_ItemPanel", "Metal Axe", "Gold Totem", function(sel)
+        if sel == 1 then selectedItem = "Metal Axe"
+        elseif sel == 2 then selectedItem = "Gold Totem"
+        else selectedItem = nil end
+        selectItemBtn.Text = selectedItem or "Select Options"
+    end)
+
+    selectItemBtn.MouseButton1Click:Connect(function()
+        itemPanel.Toggle(selectItemBtn)
+    end)
+
+    -- ===== Row 2: Select Amount (A V2) =====
+    local rowAmt = makeRow("AB_Row_Amount", base + 3, "Select Amount")
+    local selectAmtBtn = Instance.new("TextButton", rowAmt)
+    selectAmtBtn.AnchorPoint = Vector2.new(1,0.5)
+    selectAmtBtn.Position = UDim2.new(1,-16,0.5,0)
+    selectAmtBtn.Size = UDim2.new(0,190,0,28)
+    selectAmtBtn.BackgroundColor3 = THEME.BLACK
+    selectAmtBtn.AutoButtonColor = false
+    selectAmtBtn.Font = Enum.Font.GothamBold
+    selectAmtBtn.TextSize = 13
+    selectAmtBtn.TextColor3 = THEME.WHITE
+    selectAmtBtn.Text = "Select Options"
+    corner(selectAmtBtn,8)
+    local amtStroke = stroke(selectAmtBtn,1.8,THEME.GREEN_DARK); amtStroke.Transparency = 0.4
+
+    local amtPanel = makeTwoButtonPanel("AB_AmountPanel", "Open 1 Egg", "Open 3 Eggs", function(sel)
+        if sel == 1 then selectedAmount = 1
+        elseif sel == 2 then selectedAmount = 3
+        else selectedAmount = nil end
+        selectAmtBtn.Text = selectedAmount and ("Buy " .. tostring(selectedAmount)) or "Select Options"
+    end)
+
+    selectAmtBtn.MouseButton1Click:Connect(function()
+        amtPanel.Toggle(selectAmtBtn)
+    end)
+
+    -- ===== Row 3: Auto Buy (A V1 switch) =====
+    local rowAuto = Instance.new("Frame")
+    rowAuto.Name = "AB_Row_Auto"
+    rowAuto.Parent = scroll
+    rowAuto.Size = UDim2.new(1,-6,0,46)
+    rowAuto.BackgroundColor3 = THEME.BLACK
+    corner(rowAuto,12)
+    stroke(rowAuto,2.2,THEME.GREEN)
+    rowAuto.LayoutOrder = base + 4
+
+    local lab = Instance.new("TextLabel", rowAuto)
+    lab.BackgroundTransparency = 1
+    lab.Position = UDim2.new(0,16,0,0)
+    lab.Size = UDim2.new(1,-160,1,0)
+    lab.Font = Enum.Font.GothamBold
+    lab.TextSize = 13
+    lab.TextColor3 = THEME.WHITE
+    lab.TextXAlignment = Enum.TextXAlignment.Left
+    lab.Text = "Auto Buy"
+
+    local sw = Instance.new("Frame", rowAuto)
+    sw.AnchorPoint = Vector2.new(1,0.5)
+    sw.Position = UDim2.new(1,-12,0.5,0)
+    sw.Size = UDim2.fromOffset(52,26)
+    sw.BackgroundColor3 = THEME.BLACK
+    corner(sw,13)
+
+    local st = Instance.new("UIStroke", sw)
+    st.Thickness = 1.8
+
+    local knob = Instance.new("Frame", sw)
+    knob.Size = UDim2.fromOffset(22,22)
+    knob.Position = UDim2.new(0,2,0.5,-11)
+    knob.BackgroundColor3 = THEME.WHITE
+    corner(knob,11)
+
+    local function update(on)
+        st.Color = on and THEME.GREEN or THEME.RED
+        knob:TweenPosition(
+            UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11),
+            Enum.EasingDirection.Out,
+            Enum.EasingStyle.Quad,
+            0.08,
+            true
+        )
+    end
+
+    local function setAuto(v)
+        AUTO = v and true or false
+        if autoConn then autoConn:Disconnect(); autoConn=nil end
+        if AUTO then
+            autoConn = RunService.Heartbeat:Connect(function()
+                requestBuyOnce()
+            end)
+        end
+    end
+
+    local btn = Instance.new("TextButton", sw)
+    btn.Size = UDim2.fromScale(1,1)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.MouseButton1Click:Connect(function()
+        setAuto(not AUTO)
+        update(AUTO)
+    end)
+
+    update(false)
+end)
 --===== UFO HUB X • SETTINGS — Smoother 🚀 (A V1 • fixed 3 rows) + Runner Save (per-map) + AA1 =====
 registerRight("Settings", function(scroll)
     local TweenService = game:GetService("TweenService")
