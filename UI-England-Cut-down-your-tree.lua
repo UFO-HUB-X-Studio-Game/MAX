@@ -1254,11 +1254,11 @@ registerRight("Home", function(scroll)
         if set3 then set3((AA1_WAT3 and AA1_WAT3.getEnabled and AA1_WAT3.getEnabled()) or false) end
     end)
 end)
---===== UFO HUB X • Home – Auto Lucky Box (Warp + Fire + Return) (Model A V1) =====
+--===== UFO HUB X • Home – Auto Lucky Box (Queue: Warp + Fire + WaitDisappear + Return) (Model A V1) =====
 -- Header : "Auto Lucky Box 🎁"
 -- Row 1  : "Auto Lucky Box"
--- Action : Warp to workspace.Debris.Normal.Main THEN Fire ProximityPrompt
--- Return : If Normal/Main disappears -> warp back to saved position
+-- Flow   : SAVE pos -> Warp to workspace.Debris.Normal.Main -> Fire ProximityPrompt
+--          -> WAIT until that Normal/Main/Prompt disappears -> Return to saved pos -> Next target
 
 registerRight("Home", function(scroll)
     local RunService = game:GetService("RunService")
@@ -1339,6 +1339,12 @@ registerRight("Home", function(scroll)
             local ok, pv = pcall(function() return main:GetPivot() end)
             if ok and pv then return pv end
         end
+        -- fallback: หา BasePart ตัวแรก
+        for _, d in ipairs(main:GetDescendants()) do
+            if d:IsA("BasePart") then
+                return d.CFrame
+            end
+        end
     end
 
     local function safeWarpToCFrame(cf)
@@ -1355,124 +1361,161 @@ registerRight("Home", function(scroll)
         end)
     end
 
-    -- ===== AUTO LOGIC =====
+    -- ===== AUTO QUEUE LOGIC =====
     local ENABLED = false
     local conn
-    local targets = {}
-    local index = 0
-    local last = 0
 
-    local DELAY = 0.4
-    local OFFSET = Vector3.new(0,0,-3)
+    -- ปรับได้
+    local OFFSET = Vector3.new(0,0,-3)  -- ยืนหน้า Main
+    local FIRE_DELAY = 0.10            -- หน่วงนิดก่อนยิง (กันวาร์ปแล้วยังไม่ stable)
+    local WAIT_TIMEOUT = 8.0           -- กันค้าง ถ้าไม่หายจริง ๆ (ครบนี้จะไปต่อ + กลับที่เดิม)
 
-    local savedCFrame = nil
-    local lastTargetCFrame = nil
+    local targets = {} -- { {normal=Instance, main=Instance}, ... }
+    local idx = 0
+
+    -- state machine
+    local busy = false
+    local current = nil
+    local savedBeforeWarp = nil
+    local waitStart = 0
 
     local function collect()
         targets = {}
         local debris = workspace:FindFirstChild("Debris")
         if not debris then return end
 
-        for _,n in ipairs(debris:GetChildren()) do
+        for _, n in ipairs(debris:GetChildren()) do
             if n.Name == "Normal" then
                 local main = n:FindFirstChild("Main")
                 if main then
-                    table.insert(targets, main)
+                    table.insert(targets, { normal = n, main = main })
                 end
             end
         end
     end
 
-    local function returnHome()
-        if savedCFrame then
-            safeWarpToCFrame(savedCFrame)
+    local function isTargetGone(t)
+        if not t then return true end
+        local normal = t.normal
+        local main = t.main
+
+        if not (normal and normal.Parent) then return true end
+        if not (main and main.Parent) then return true end
+
+        local p = main:FindFirstChild("ProximityPrompt")
+        if not (p and p:IsA("ProximityPrompt")) then
+            -- ถ้า prompt หาย ถือว่า “หาย/หมดรอบ” ตามที่นายต้องการ
+            return true
         end
+
+        return false
     end
 
-    local function step()
-        if not ENABLED then return end
-        if os.clock() - last < DELAY then return end
-        last = os.clock()
-
-        -- ถ้าไม่มีเป้าหมายแล้ว = กล่องหาย -> กลับที่เดิม
-        if #targets == 0 then
-            collect()
-            if #targets == 0 then
-                returnHome()
-                return
-            end
+    local function returnToSaved()
+        if savedBeforeWarp then
+            safeWarpToCFrame(savedBeforeWarp)
         end
+        savedBeforeWarp = nil
+    end
 
-        index = (index % #targets) + 1
-        local main = targets[index]
-
-        -- ถ้า main หายไปแล้ว -> กลับบ้าน + รีคอลเลค
-        if not (main and main.Parent) then
-            collect()
-            returnHome()
-            return
-        end
-
+    local function startOneTarget(t)
         local hum, hrp = getChar()
         if not hrp then return end
+        if not (t and t.main and t.main.Parent) then return end
 
-        local cf = getMainCFrame(main)
-        if not cf then
-            collect()
-            returnHome()
-            return
-        end
+        -- ✅ เซฟ “ตอนจะวาร์ปไป” ทุกครั้ง (ตามที่สั่ง)
+        savedBeforeWarp = hrp.CFrame
 
-        -- วาร์ปไปหน้า Main
-        local targetCf = cf * CFrame.new(OFFSET)
-        lastTargetCFrame = targetCf
-        safeWarpToCFrame(targetCf)
+        local cf = getMainCFrame(t.main)
+        if not cf then return end
 
-        -- แล้วค่อยกด ProximityPrompt
-        local prompt = main:FindFirstChild("ProximityPrompt")
-        if prompt and prompt:IsA("ProximityPrompt") then
-            pcall(function()
-                fireproximityprompt(prompt)
-            end)
-        end
+        busy = true
+        current = t
+        waitStart = os.clock()
 
-        -- หลังยิงเสร็จ: ถ้า Main/Prompt หาย (โดน Destroy) -> กลับที่เดิม
-        task.defer(function()
-            if not ENABLED then return end
+        -- วาร์ปก่อน
+        safeWarpToCFrame(cf * CFrame.new(OFFSET))
 
-            -- กันเคสโดนย้าย/ลบ: parent หาย หรือ prompt หาย
-            local stillAlive = (main and main.Parent ~= nil)
-            local stillHasPrompt = false
-            if stillAlive then
-                local p = main:FindFirstChild("ProximityPrompt")
-                stillHasPrompt = (p and p:IsA("ProximityPrompt")) and true or false
-            end
-
-            if (not stillAlive) or (not stillHasPrompt) then
-                collect()
-                returnHome()
+        -- แล้วค่อยยิง (หน่วงนิดให้ยืนเสถียร)
+        task.delay(FIRE_DELAY, function()
+            if not ENABLED or not busy or current ~= t then return end
+            local p = t.main and t.main:FindFirstChild("ProximityPrompt")
+            if p and p:IsA("ProximityPrompt") then
+                pcall(function()
+                    fireproximityprompt(p)
+                end)
             end
         end)
     end
 
+    local function tick()
+        if not ENABLED then return end
+
+        -- ถ้ายัง busy = รอให้ “อันนี้” หายก่อน
+        if busy then
+            if isTargetGone(current) then
+                -- หายแล้ว -> กลับที่เดิม แล้วค่อยไปตัวถัดไป
+                returnToSaved()
+                busy = false
+                current = nil
+                return
+            end
+
+            -- กันค้าง: รอนานเกิน -> กลับบ้านแล้วไปต่อ
+            if (os.clock() - waitStart) >= WAIT_TIMEOUT then
+                returnToSaved()
+                busy = false
+                current = nil
+                return
+            end
+
+            return
+        end
+
+        -- ไม่ busy = เริ่มอันถัดไป
+        if #targets == 0 then
+            collect()
+            if #targets == 0 then return end
+            idx = 0
+        end
+
+        -- ข้ามตัวที่หายไปแล้ว (กัน list เก่า)
+        local tries = 0
+        while tries < #targets do
+            idx = (idx % #targets) + 1
+            local t = targets[idx]
+            if not isTargetGone(t) then
+                startOneTarget(t)
+                return
+            end
+            tries += 1
+        end
+
+        -- ถ้าทั้งหมดหาย/ใช้ไม่ได้ -> รีคอลเลคใหม่
+        collect()
+        idx = 0
+    end
+
     local function setEnabled(v)
         ENABLED = v and true or false
-        if conn then conn:Disconnect() conn = nil end
+        if conn then conn:Disconnect(); conn = nil end
+
+        busy = false
+        current = nil
+        savedBeforeWarp = nil
+        waitStart = 0
 
         if ENABLED then
-            local _, hrp = getChar()
-            savedCFrame = hrp and hrp.CFrame or nil
-
             collect()
-            index = 0
-            last = 0
-            conn = RunService.Heartbeat:Connect(step)
+            idx = 0
+            conn = RunService.Heartbeat:Connect(tick)
         else
-            returnHome()
+            -- ปิดแล้วกลับที่เดิม (ถ้ามีค้างอยู่)
+            returnToSaved()
         end
     end
 
-    -- ===== ROW =====
+    -- ===== ROW UI =====
     local row = Instance.new("Frame")
     row.Name = "ALB_Row1"
     row.Parent = scroll
